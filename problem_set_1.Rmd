@@ -1,0 +1,258 @@
+---
+title: "Problem Set 1"
+output: html_notebook
+---
+
+**SAXA 3**
+
+Mike Johnson \| Kris Lederer \| Sebastian Martinez \| Ryan Mathis \| Khushi Patel
+
+### Set up
+
+```{r}
+# Import libraries
+library(tidyverse)
+library(broom)
+library(ivreg)
+library(lmtest)
+library(sandwich)
+library(stargazer)
+
+# Read data
+df = read.csv('ae98.csv')
+```
+
+### Question 1
+
+**Provide a table with summary statistics for the relevant variables.**
+
+```{r}
+# Create table with summary stats
+summary_stats = df %>% 
+  summarise_all(list(
+    n = ~sum(!is.na(.)),
+    mean = ~mean(., na.rm = TRUE),
+    sd = ~sd(., na.rm = TRUE),
+    min = ~min(., na.rm = TRUE),
+    max = ~max(., na.rm = TRUE)
+  )) %>% 
+  pivot_longer(everything(), # Move columns to rows
+               names_to = c("variable", "stat"), # Split variable and stat  
+               names_pattern = "(.*)_(.*)") %>%
+  pivot_wider(names_from = stat, values_from = value) %>% # Move stat to columns
+  mutate(across(where(is.numeric), ~round(., 2))) # Rounding
+
+summary_stats
+```
+
+### Question 2
+
+**Suppose one were to estimate equation 1 using OLS. Explain the conditions under which OLS provides unbiased and consistent estimates of the causal effect. Do you think these conditions likely to hold? Why or why not?**
+
+For OLS to provide unbiased and consistent estimates of the causal effect, the regressor of interest (i.e., `morekids`) must be uncorrelated with the error term.
+
+When this condition holds:
+
+-   **Unbiased**: On average, the OLS estimate equals $𝛽_1$
+
+-   **Consistent**: As the number of observations increases, the estimate converges to $𝛽_1$
+
+The conditions do not likely hold because the decision to have more children (`morekids`) is likely endogenous because it's correlated with unobserved factors that could also impact the mother's decision. This creates omitted variable bias.
+
+Potential sources of edogeneity:
+
+-   **Career Preferences**: Women who prefer having more children might also have different preferences with work-life balance or career priorities.
+
+-   **Family Conditions**: Family wealth, child support, or health could influence the decision to have more children or work.
+
+-   **Economic Conditions**: The cost of living and the economic opportunities available could influence the decision to have more children or work.
+
+Since these unobserved factors likely correlate to the decision to have more children, the exogeneity assumption is violated.
+
+### Question 3
+
+**Angrist and Evans propose that** $x_i$ **is an endogenous regressor, and that `samesex` and `twins2` can be used as instrumental variables in a 2SLS regression. Explain why these instruments might satisfy the relevance and orthogonality conditions.**
+
+-   **Relevance:** The instrument must predict the endogenous regressor.
+
+    -   `samesex`: Parents could prefer having both boys and girls. If the first two children are the same sex, then parents would be more likely try to have a third child of the opposite sex. This would suggest a relationship between `samesex` and `morekids`.
+
+    -   `twins2`: Having twins on the second pregnancy automatically increases the number of children from 1 to 3. Parents who may have planned to have to kids now have 3. This suggests a relationship between `twins2` and `morekids`.
+
+-   **Orthogonality:** The instrument must affect the dependent variable only through the regressors.
+
+    -   `samesex`: The sex of a child determined randomly. There's a 50% change of each sex. Parents cannot control for this. The sex composition should not directly impact the mother's decisions to work.
+
+    -   `twins2`: Twin births occur randomly. Parents cannot choose to have twins. Having twins shouldn't directly affect the mother's decision to work, but driven by increased number of children.
+
+### Question 4
+
+**Brainstorm an alternative instrumental variable that is not in the data set. Explain why you think it would satisfy relevance and orthogonality.**
+
+An possible alternative instrumental variable would be a *miscarriage after the second child*.
+
+-   **Relevance**: The trauma of experiencing a miscarriage could discourage parents from having a third child either out of fear of experiencing the event of again and/or potential risks to the mother's health.
+
+-   **Orthogonality**: A miscarriage is a random event. This would not effect a mother's decision to work.
+
+### Question 5
+
+**Estimate with OLS, and with 2SLS using samesex as an instrument. Provide a table with coefficients and standard errors for (i) OLS, (ii) the first-stage regression, and (iii) the second- stage regression. Is the instrument relevant in the first stage? How do you know? Does the instrument satisfy the exclusion restriction? How do you know?**
+
+#### Part 1: OLS
+
+-   Regresses `momworked` on `morekids` + controls
+
+-   Shows the potentially biased estimate
+
+```{r}
+ols_model = lm(momworked ~ morekids + moreths + blackm + hispm, data = df)
+
+summary(ols_model)
+```
+
+#### Part 2: First-Stage Regression
+
+-   Tests relevance: `morekids` \~ `samesex` + controls
+
+```{r}
+first_stage_samesex = lm(morekids ~ samesex + moreths + blackm + hispm, data = df)
+
+summary(first_stage_samesex)
+```
+
+#### Part 3: 2SLS
+
+```{r}
+iv_samesex = ivreg(momworked ~ morekids + moreths + blackm + hispm | samesex + moreths + blackm + hispm, data = df)
+
+summary(iv_samesex)
+
+```
+
+##### Table of coefficients and standard errors
+
+```{r}
+#Calculate robust standard errors for EACH model
+
+robust_ols = coeftest(ols_model, vcov = vcovHC(ols_model, type = "HC1"))
+
+robust_first_stage = coeftest(first_stage_samesex, vcov = vcovHC(first_stage_samesex, type = "HC1"))
+
+robust_iv_samesex = coeftest(iv_samesex, vcov = vcovHC(iv_samesex, type = "HC1"))
+```
+
+```{r}
+
+stargazer(ols_model, first_stage_samesex, iv_samesex,   # Pass the ORIGINAL model objects
+          
+          # Provide your robust standard errors as a list.
+          # Stargazer will use these to replace the default SEs.
+          # The order in the list MUST match the order of the models.
+          se = list(robust_ols[, "Std. Error"], 
+                    robust_first_stage[, "Std. Error"], 
+                    robust_iv_samesex[, "Std. Error"]),
+
+          title = "OLS and 2SLS Estimates using 'samesex' instrument",
+          column.labels = c("OLS", "First-Stage", "2SLS (IV)"),
+          
+          # Label the dependent variable for each column
+          dep.var.labels = c("momworked", "morekids", "momworked"),
+          
+          # Clean up the variable names for the final table
+          covariate.labels = c("More than Two Kids", "Same-sex Children", 
+                               "More than HS", "Black", "Hispanic"),
+          
+          type = "text") # Specify text output for the console
+       
+```
+
+##### Analysis
+
+Based on the results, an F-statistic of 1503.9 is is greater than 10. This means that `samesex` is relevant. However, we do not know if if the instrument satisfies the exclusion restriction because the assumption is not testable. The randomness of the child's sex makes the exclusion restriction possible, but not guaranteed.
+
+### Question 6
+
+#### Part 1: 2SLS Using `twins2`
+
+```{r}
+
+iv_twins2 = ivreg(momworked ~ morekids + moreths + blackm + hispm | 
+                   twins2 + moreths + blackm + hispm, 
+                   data = df)
+
+summary(iv_twins2)
+```
+
+#### Part 2: 2SLS Using Both Instruments
+
+```{r}
+iv_both = ivreg(momworked ~ morekids + moreths + blackm + hispm | 
+                 samesex + twins2 + moreths + blackm + hispm, 
+                 data = df)
+
+summary(iv_both)
+```
+
+##### Table of coefficients and standard errors
+
+```{r}
+#Calculate robust standard errors for EACH model
+robust_iv_twins2 = coeftest(iv_twins2, vcov = vcovHC(iv_twins2, type = "HC1"))
+robust_iv_both = coeftest(iv_both, vcov = vcovHC(iv_both, type = "HC1"))
+```
+
+```{r}
+stargazer(ols_model, iv_twins2, iv_both,   # Pass the ORIGINAL model objects
+          
+          # Provide your robust standard errors as a list.
+          # Stargazer will use these to replace the default SEs.
+          # The order in the list MUST match the order of the models.
+          se = list(robust_ols[, "Std. Error"], 
+                    robust_iv_twins2[, "Std. Error"], 
+                    robust_iv_both[, "Std. Error"]),
+
+          title = "OLS and 2SLS Estimates",
+          column.labels = c("OLS", "2SLS twins2", "2SLS samesex & twins2"),
+          
+          # Label the dependent variable for each column
+          dep.var.labels = c("momworked", "morekids", "momworked"),
+          
+          # Clean up the variable names for the final table
+          covariate.labels = c("More than Two Kids", "Same-sex Children", 
+                               "More than HS", "Black", "Hispanic"),
+          
+          type = "text") # Specify text output for the console
+```
+
+##### Analysis
+
+The estimates differ where `twins2` gives a less negative effect than `samesex`. In addition, `twins2` (F = 5,211) is a stronger instrument than `samesex` (F = 1502). These likely differ due to `twins2` increasing the child count by 2 vs `samesex` by 1.
+
+### Question 7
+
+**Obtain the Sargan test statistic for the over-identified 2SLS model that uses two instruments, and interpret its value.**
+
+```{r}
+summary(iv_both, diagnostics = TRUE)
+```
+
+We cannot reject that that using one instrument or the other gets the same result. This means that there is no evidence to suggest that the instruments, `samesex` and `twins2,` are invalid.
+
+### Question 8
+
+Save the residuals you obtain in the first stage regression from Question 5. Estimate equation (1) using OLS, this time adding the residuals as an additional control variable. What do you observe about the estimated β1 coefficient? Is the coefficient on the first-stage residuals statistically significant, and what might this mean? Note that this procedure is known as the “control function” approach to instrumental variables regression. Explain why it might obtain consistent estimates of causal effects.
+
+```{r}
+# Extract first stage residuals
+df$first_stage_residuals = residuals(first_stage_samesex)
+
+# Estimate equation using OLS with the residuals as a control variable
+control_function_model = lm(momworked ~ morekids + moreths + blackm + hispm + first_stage_residuals, data = df)
+
+robust_cf_model = coeftest(control_function_model, vcov = vcovHC(control_function_model, type = "HC1"))
+
+robust_cf_model
+```
+
+Based on these results, a simple OLS regression would have been sufficient. At a p value of 0.78, we fail to reject the null hypothesis. Meaning there is no evidence that endogeneity exists.
