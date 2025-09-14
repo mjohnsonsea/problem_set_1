@@ -255,4 +255,6 @@ robust_cf_model = coeftest(control_function_model, vcov = vcovHC(control_functio
 robust_cf_model
 ```
 
+The β1 on `morekids` is nearly identical to the one from the 2SLS estimate of (-0.1287).
+
 Based on these results, a simple OLS regression would have been sufficient. At a p value of 0.78, we fail to reject the null hypothesis. Meaning there is no evidence that endogeneity exists.
